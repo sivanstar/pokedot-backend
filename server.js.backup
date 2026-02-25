@@ -1,0 +1,280 @@
+const express = require('express');
+const cors = require('cors');
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+require('dotenv').config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Connect to MongoDB
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('‚úÖ MongoDB Atlas Connected'))
+  .catch(err => console.error('‚ùå MongoDB Error:', err));
+
+// Middleware
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  credentials: true
+}));
+app.use(express.json());
+
+// ===================== MODELS =====================
+
+// User Schema
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true, trim: true },
+  email: { type: String, required: true, unique: true, lowercase: true },
+  password: { type: String, required: true, select: false },
+  points: { type: Number, default: 500 },
+  pokesSent: { type: Number, default: 0 },
+  pokesReceived: { type: Number, default: 0 },
+  streak: { type: Number, default: 0 },
+  rank: { type: Number, default: 999 },
+  role: { type: String, default: 'user' },
+  isOnline: { type: Boolean, default: false },
+  isActive: { type: Boolean, default: true },
+  couponCodeUsed: { type: String, required: true },
+  referralCode: String,
+  referredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  referrals: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  bankDetails: {
+    bankName: String,
+    accountName: String,
+    accountNumber: String,
+    verified: { type: Boolean, default: false }
+  }
+}, { timestamps: true });
+
+// Hash password
+userSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next();
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Compare password
+userSchema.methods.comparePassword = async function(candidatePassword) {
+  return await bcrypt.compare(candidatePassword, this.password);
+};
+
+const User = mongoose.model('User', userSchema);
+
+// Coupon Schema
+const couponSchema = new mongoose.Schema({
+  code: { type: String, required: true, unique: true, uppercase: true },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  usedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  isActive: { type: Boolean, default: true },
+  maxUses: { type: Number, default: 1 },
+  timesUsed: { type: Number, default: 0 }
+}, { timestamps: true });
+
+const Coupon = mongoose.model('Coupon', couponSchema);
+
+// ===================== MIDDLEWARE =====================
+
+const protect = async (req, res, next) => {
+  try {
+    let token;
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'Not authorized' });
+    }
+
+    // IMPORTANT: Using REAL JWT verification
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select('-password');
+    
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'User not found' });
+    }
+
+    req.user = user;
+    next();
+  } catch (error) {
+    console.error('Auth error:', error.message);
+    res.status(401).json({ success: false, message: 'Invalid token' });
+  }
+};
+
+// ===================== ROUTES =====================
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    message: 'POKEDOT Backend with REAL JWT',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Register user - WITH REAL JWT
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { username, email, password, couponCode } = req.body;
+    console.log('REAL Registration attempt for:', username);
+
+    // Check coupon
+    const coupon = await Coupon.findOne({ 
+      code: couponCode?.toUpperCase(),
+      isActive: true
+    });
+
+    if (!coupon) {
+      return res.status(400).json({ success: false, message: 'Invalid coupon' });
+    }
+
+    if (coupon.timesUsed >= coupon.maxUses) {
+      return res.status(400).json({ success: false, message: 'Coupon used up' });
+    }
+
+    // Check existing user
+    const existingUser = await User.findOne({ $or: [{ email }, { username }] });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: 'User exists' });
+    }
+
+    // Create user
+    const user = await User.create({
+      username,
+      email,
+      password,
+      couponCodeUsed: coupon.code,
+      points: 500
+    });
+
+    // Update coupon
+    coupon.usedBy = user._id;
+    coupon.timesUsed += 1;
+    await coupon.save();
+
+    // GENERATE REAL JWT TOKEN - NOT "demo-token"
+    const token = jwt.sign(
+      { id: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    const userData = await User.findById(user._id).select('-password');
+
+    res.status(201).json({
+      success: true,
+      token, // This will be REAL JWT
+      user: userData
+    });
+
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Login - WITH REAL JWT
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await User.findOne({ email }).select('+password');
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Invalid' });
+    }
+
+    const isPasswordValid = await user.comparePassword(password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ success: false, message: 'Invalid' });
+    }
+
+    // REAL JWT TOKEN
+    const token = jwt.sign(
+      { id: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    const userData = await User.findById(user._id).select('-password');
+
+    res.json({
+      success: true,
+      token, // REAL JWT
+      user: userData
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Profile - PROTECTED
+app.get('/api/auth/profile', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('-password');
+    res.json({ success: true, user });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Seed endpoint
+app.post('/api/admin/seed', async (req, res) => {
+  try {
+    // Create admin
+    let admin = await User.findOne({ email: 'admin@pokedot.com' });
+    if (!admin) {
+      admin = await User.create({
+        username: 'admin',
+        email: 'admin@pokedot.com',
+        password: 'Admin123!@#',
+        role: 'admin',
+        points: 10000,
+        couponCodeUsed: 'SEED'
+      });
+    }
+
+    // Create coupons
+    const coupons = [
+      { code: 'WELCOME500', maxUses: 100 },
+      { code: 'TEST123', maxUses: 10 },
+    ];
+
+    for (const couponData of coupons) {
+      let coupon = await Coupon.findOne({ code: couponData.code });
+      if (!coupon) {
+        await Coupon.create({
+          ...couponData,
+          createdBy: admin._id,
+          isActive: true
+        });
+      }
+    }
+
+    res.json({ 
+      success: true, 
+      message: 'Seeded with REAL JWT server'
+    });
+
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Seed error' });
+  }
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`
+  Ì∫Ä POKEDOT Backend with REAL JWT
+  Ì≥ç Port: ${PORT}
+  Ìºê URL: http://localhost:${PORT}
+  Ì¥ê JWT: REAL tokens (not demo)
+  ‚è∞ Time: ${new Date().toLocaleString()}
+  `);
+});
