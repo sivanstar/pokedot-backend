@@ -1380,9 +1380,24 @@ app.post('/api/auth/register', async (req, res) => {
   try {
     const { username, email, password, referralCode } = req.body;
 
-    const existingUser = await User.findOne({ $or: [{ email }, { username }] });
-    if (existingUser) {
-      return res.status(400).json({ success: false, message: 'User already exists' });
+    // Check if username already exists
+    const existingUsername = await User.findOne({ username });
+    if (existingUsername) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Username already exists',
+        field: 'username' 
+      });
+    }
+
+    // Check if email already exists
+    const existingEmail = await User.findOne({ email });
+    if (existingEmail) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email already registered',
+        field: 'email' 
+      });
     }
 
     const user = new User({
@@ -1430,7 +1445,29 @@ app.post('/api/auth/register', async (req, res) => {
 
   } catch (error) {
     console.error('Registration error:', error);
-    res.status(500).json({ success: false, message: 'Server error: ' + error.message });
+    
+    // Handle MongoDB duplicate key error
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      if (field === 'username') {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Username already exists',
+          field: 'username'
+        });
+      } else if (field === 'email') {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Email already registered',
+          field: 'email'
+        });
+      }
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error: ' + error.message 
+    });
   }
 });
 
@@ -1798,19 +1835,19 @@ app.use((err, req, res, next) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`
-  íº€ POKEDOT Backend Server Started
-  í³Š Port: ${PORT}
-  í³¦ MongoDB: ${mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'}
+  ï¿½ï¿½ï¿½ POKEDOT Backend Server Started
+  ï¿½ï¿½ï¿½ Port: ${PORT}
+  ï¿½ï¿½ï¿½ MongoDB: ${mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'}
   â° Time: ${new Date().toLocaleString()}
   `);
-  console.log('\ní³¡ Wallet Routes Mounted at /api/wallet:');
+  console.log('\nï¿½ï¿½ï¿½ Wallet Routes Mounted at /api/wallet:');
   console.log('   âœ… PUT    /api/wallet/bank-details    - Update bank details');
   console.log('   âœ… GET    /api/wallet/balance         - Get wallet balance');
   console.log('   âœ… POST   /api/wallet/withdraw        - Request withdrawal');
   console.log('   âœ… GET    /api/wallet/transactions    - Transaction history');
   console.log('   âœ… GET    /api/wallet/withdrawals     - Withdrawal history');
   
-  console.log('\ní³¡ Admin Routes Mounted at /api/admin:');
+  console.log('\nï¿½ï¿½ï¿½ Admin Routes Mounted at /api/admin:');
   console.log('   âœ… GET    /api/admin/stats            - System statistics');
   console.log('   âœ… GET    /api/admin/users            - List users');
   console.log('   âœ… GET    /api/admin/users/:userId    - Get user details');
