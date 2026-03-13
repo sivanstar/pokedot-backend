@@ -93,7 +93,7 @@ const transactionSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   type: { 
     type: String, 
-    enum: ['poke', 'withdrawal', 'signup_bonus', 'referral_bonus', 'milestone_reward', 'admin_adjustment'],
+    enum: ['poke', 'withdrawal', 'signup_bonus', 'referral_bonus', 'milestone_reward', 'admin_adjustment', 'task_bonus'],
     required: true 
   },
   amount: { type: Number, required: true },
