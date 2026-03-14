@@ -30,17 +30,14 @@ const allowedOrigins = [
   'http://localhost:5175',
   'http://localhost:3000',
   'http://127.0.0.1:5175',
-  'https://pokedot-frontend.vercel.app', // Your Vercel frontend URL
-  process.env.FRONTEND_URL // Fallback to environment variable
-].filter(Boolean); // Remove any undefined values
+  'https://pokedot-frontend.vercel.app',
+  process.env.FRONTEND_URL
+].filter(Boolean);
 
 // CORS configuration
 app.use(cors({
   origin: function(origin, callback) {
-    // Allow requests with no origin (like mobile apps, Postman, curl)
     if (!origin) return callback(null, true);
-    
-    // Check if the origin is allowed
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
@@ -53,9 +50,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
-// Handle preflight requests
 app.options('*', cors());
-
 app.use(express.json());
 
 // ===================== MODELS =====================
@@ -128,7 +123,7 @@ const couponSchema = new mongoose.Schema({
   expiresAt: Date
 }, { timestamps: true });
 
-// User Schema
+// User Schema - ADDED TASK FIELDS
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, trim: true, minlength: 3 },
   email: { type: String, required: true, unique: true, lowercase: true },
@@ -164,7 +159,15 @@ const userSchema = new mongoose.Schema({
     receivedFrom: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
   },
   totalWithdrawn: { type: Number, default: 0 },
-  totalEarned: { type: Number, default: CONSTANTS.SIGNUP_BONUS }
+  totalEarned: { type: Number, default: CONSTANTS.SIGNUP_BONUS },
+  // NEW TASK FIELDS
+  lastLoginTaskCompleted: { type: Boolean, default: false },
+  dailyTask: {
+    lastTaskDate: { type: String, default: '' },
+    tasksCompleted: { type: Number, default: 0 },
+    lastTaskCompletedAt: { type: Date, default: null },
+    taskRequired: { type: Boolean, default: true }
+  }
 }, { 
   timestamps: true,
   toJSON: { virtuals: true },
@@ -1407,7 +1410,8 @@ app.post('/api/auth/register', async (req, res) => {
       points: CONSTANTS.SIGNUP_BONUS,
       totalEarned: CONSTANTS.SIGNUP_BONUS,
       lastLoginDate: new Date(),
-      loginStreak: 1
+      loginStreak: 1,
+      lastLoginTaskCompleted: false
     });
 
     await user.save();
@@ -1811,6 +1815,149 @@ app.get('/api/users/position', protect, async (req, res) => {
   }
 });
 
+// ===================== TASK ROUTES =====================
+
+// Check if user needs to complete task
+app.get('/api/task/status', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Check if this is first login after signup or if task not completed for today
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Initialize dailyTask if not exists
+    if (!user.dailyTask) {
+      user.dailyTask = {
+        lastTaskDate: '',
+        tasksCompleted: 0,
+        lastTaskCompletedAt: null,
+        taskRequired: true
+      };
+      await user.save();
+    }
+
+    // Determine if task is needed
+    const needsTask = !user.lastLoginTaskCompleted || 
+                     (user.dailyTask?.lastTaskDate !== today && user.dailyTask?.tasksCompleted === 0);
+    
+    console.log(`Task status for ${user.username}: needsTask=${needsTask}`);
+    
+    res.json({
+      success: true,
+      needsTask,
+      message: needsTask ? 'Please complete a task to continue' : 'Task already completed'
+    });
+  } catch (error) {
+    console.error('Task status error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Mark task as completed
+app.post('/api/task/complete', protect, async (req, res) => {
+  try {
+    const { adTaskId } = req.body;
+    const user = await User.findById(req.user._id);
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const BONUS_POINTS = 10; // Small bonus for watching ad
+    
+    // Initialize dailyTask if not exists
+    if (!user.dailyTask) {
+      user.dailyTask = {
+        lastTaskDate: '',
+        tasksCompleted: 0,
+        lastTaskCompletedAt: null,
+        taskRequired: true
+      };
+    }
+
+    // Store points before update
+    const balanceBefore = user.points;
+
+    // Mark task as completed
+    user.lastLoginTaskCompleted = true;
+    user.dailyTask.lastTaskDate = today;
+    user.dailyTask.tasksCompleted += 1;
+    user.dailyTask.lastTaskCompletedAt = new Date();
+    
+    // Give bonus points for completing task
+    user.points += BONUS_POINTS;
+    user.totalEarned = (user.totalEarned || 0) + BONUS_POINTS;
+    
+    await user.save();
+
+    // Create transaction record for bonus
+    try {
+      await Transaction.create({
+        user: user._id,
+        type: 'task_bonus',
+        amount: BONUS_POINTS,
+        balanceBefore,
+        balanceAfter: user.points,
+        description: 'Daily task completion bonus',
+        status: 'completed',
+        metadata: { adTaskId }
+      });
+    } catch (txError) {
+      console.error('Error creating transaction:', txError);
+      // Non-critical, continue
+    }
+
+    console.log(`Task completed for ${user.username}, earned ${BONUS_POINTS} points`);
+
+    res.json({
+      success: true,
+      message: 'Task completed successfully',
+      pointsEarned: BONUS_POINTS,
+      newBalance: user.points
+    });
+
+  } catch (error) {
+    console.error('Task completion error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get task statistics (for admin)
+app.get('/api/admin/task-stats', admin, async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    
+    const [totalUsers, usersCompletedToday, totalTasksCompleted] = await Promise.all([
+      User.countDocuments(),
+      User.countDocuments({ 
+        'dailyTask.lastTaskDate': today,
+        'dailyTask.tasksCompleted': { $gt: 0 }
+      }),
+      User.aggregate([
+        { $group: { _id: null, total: { $sum: '$dailyTask.tasksCompleted' } } }
+      ])
+    ]);
+
+    res.json({
+      success: true,
+      stats: {
+        totalUsers,
+        usersCompletedToday,
+        totalTasksCompleted: totalTasksCompleted[0]?.total || 0,
+        completionRate: totalUsers > 0 ? Math.round((usersCompletedToday / totalUsers) * 100) : 0
+      }
+    });
+  } catch (error) {
+    console.error('Task stats error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ 
@@ -1835,19 +1982,19 @@ app.use((err, req, res, next) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`
-  ï¿½ï¿½ï¿½ POKEDOT Backend Server Started
-  ï¿½ï¿½ï¿½ Port: ${PORT}
-  ï¿½ï¿½ï¿½ MongoDB: ${mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'}
+  íº€ POKEDOT Backend Server Started
+  í³Š Port: ${PORT}
+  í³¦ MongoDB: ${mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'}
   â° Time: ${new Date().toLocaleString()}
   `);
-  console.log('\nï¿½ï¿½ï¿½ Wallet Routes Mounted at /api/wallet:');
+  console.log('\ní³¡ Wallet Routes Mounted at /api/wallet:');
   console.log('   âœ… PUT    /api/wallet/bank-details    - Update bank details');
   console.log('   âœ… GET    /api/wallet/balance         - Get wallet balance');
   console.log('   âœ… POST   /api/wallet/withdraw        - Request withdrawal');
   console.log('   âœ… GET    /api/wallet/transactions    - Transaction history');
   console.log('   âœ… GET    /api/wallet/withdrawals     - Withdrawal history');
   
-  console.log('\nï¿½ï¿½ï¿½ Admin Routes Mounted at /api/admin:');
+  console.log('\ní³¡ Admin Routes Mounted at /api/admin:');
   console.log('   âœ… GET    /api/admin/stats            - System statistics');
   console.log('   âœ… GET    /api/admin/users            - List users');
   console.log('   âœ… GET    /api/admin/users/:userId    - Get user details');
@@ -1860,5 +2007,10 @@ app.listen(PORT, () => {
   console.log('   âœ… PUT    /api/admin/withdrawals/:withdrawalId - Update withdrawal');
   console.log('   âœ… GET    /api/admin/pokes            - Poke history');
   console.log('   âœ… GET    /api/admin/activities       - Recent activities');
+  console.log('   âœ… GET    /api/admin/task-stats       - Task completion stats');
   console.log('   âœ… POST   /api/admin/create-admin     - Create admin user');
+  
+  console.log('\ní³¡ Task Routes Mounted at /api/task:');
+  console.log('   âœ… GET    /api/task/status            - Check if task needed');
+  console.log('   âœ… POST   /api/task/complete          - Mark task completed');
 });
