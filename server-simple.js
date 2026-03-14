@@ -1868,7 +1868,6 @@ app.post('/api/task/complete', protect, async (req, res) => {
     }
 
     const today = new Date().toISOString().split('T')[0];
-    const BONUS_POINTS = 10; // Small bonus for watching ad
     
     // Initialize dailyTask if not exists
     if (!user.dailyTask) {
@@ -1880,45 +1879,19 @@ app.post('/api/task/complete', protect, async (req, res) => {
       };
     }
 
-    // Store points before update
-    const balanceBefore = user.points;
-
     // Mark task as completed
     user.lastLoginTaskCompleted = true;
     user.dailyTask.lastTaskDate = today;
     user.dailyTask.tasksCompleted += 1;
     user.dailyTask.lastTaskCompletedAt = new Date();
     
-    // Give bonus points for completing task
-    user.points += BONUS_POINTS;
-    user.totalEarned = (user.totalEarned || 0) + BONUS_POINTS;
-    
     await user.save();
 
-    // Create transaction record for bonus
-    try {
-      await Transaction.create({
-        user: user._id,
-        type: 'task_bonus',
-        amount: BONUS_POINTS,
-        balanceBefore,
-        balanceAfter: user.points,
-        description: 'Daily task completion bonus',
-        status: 'completed',
-        metadata: { adTaskId }
-      });
-    } catch (txError) {
-      console.error('Error creating transaction:', txError);
-      // Non-critical, continue
-    }
-
-    console.log(`Task completed for ${user.username}, earned ${BONUS_POINTS} points`);
+    console.log(`Task completed for ${user.username}`);
 
     res.json({
       success: true,
-      message: 'Task completed successfully',
-      pointsEarned: BONUS_POINTS,
-      newBalance: user.points
+      message: 'Task completed successfully'
     });
 
   } catch (error) {
@@ -1982,19 +1955,19 @@ app.use((err, req, res, next) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`
-  íº€ POKEDOT Backend Server Started
-  í³Š Port: ${PORT}
-  í³¦ MongoDB: ${mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'}
+  ï¿½ï¿½ï¿½ POKEDOT Backend Server Started
+  ï¿½ï¿½ï¿½ Port: ${PORT}
+  ï¿½ï¿½ï¿½ MongoDB: ${mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'}
   â° Time: ${new Date().toLocaleString()}
   `);
-  console.log('\ní³¡ Wallet Routes Mounted at /api/wallet:');
+  console.log('\nï¿½ï¿½ï¿½ Wallet Routes Mounted at /api/wallet:');
   console.log('   âœ… PUT    /api/wallet/bank-details    - Update bank details');
   console.log('   âœ… GET    /api/wallet/balance         - Get wallet balance');
   console.log('   âœ… POST   /api/wallet/withdraw        - Request withdrawal');
   console.log('   âœ… GET    /api/wallet/transactions    - Transaction history');
   console.log('   âœ… GET    /api/wallet/withdrawals     - Withdrawal history');
   
-  console.log('\ní³¡ Admin Routes Mounted at /api/admin:');
+  console.log('\nï¿½ï¿½ï¿½ Admin Routes Mounted at /api/admin:');
   console.log('   âœ… GET    /api/admin/stats            - System statistics');
   console.log('   âœ… GET    /api/admin/users            - List users');
   console.log('   âœ… GET    /api/admin/users/:userId    - Get user details');
@@ -2010,7 +1983,7 @@ app.listen(PORT, () => {
   console.log('   âœ… GET    /api/admin/task-stats       - Task completion stats');
   console.log('   âœ… POST   /api/admin/create-admin     - Create admin user');
   
-  console.log('\ní³¡ Task Routes Mounted at /api/task:');
+  console.log('\nï¿½ï¿½ï¿½ Task Routes Mounted at /api/task:');
   console.log('   âœ… GET    /api/task/status            - Check if task needed');
   console.log('   âœ… POST   /api/task/complete          - Mark task completed');
 });
