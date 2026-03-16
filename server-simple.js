@@ -160,7 +160,7 @@ const userSchema = new mongoose.Schema({
   },
   totalWithdrawn: { type: Number, default: 0 },
   totalEarned: { type: Number, default: CONSTANTS.SIGNUP_BONUS },
-  // NEW TASK FIELDS
+  // TASK FIELDS
   lastLoginTaskCompleted: { type: Boolean, default: false },
   dailyTask: {
     lastTaskDate: { type: String, default: '' },
@@ -1475,7 +1475,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// Login
+// Login - FIXED: Reset task status on every login
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -1491,7 +1491,13 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
+    // Update online status
     user.isOnline = true;
+    
+    // CRITICAL FIX: Reset task completion for this new login session
+    // This ensures the user sees the task modal on EVERY login
+    user.lastLoginTaskCompleted = false;
+    
     await user.save();
 
     await User.updateUserRanks();
@@ -1826,9 +1832,6 @@ app.get('/api/task/status', protect, async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Check if this is first login after signup or if task not completed for today
-    const today = new Date().toISOString().split('T')[0];
-    
     // Initialize dailyTask if not exists
     if (!user.dailyTask) {
       user.dailyTask = {
@@ -1840,11 +1843,11 @@ app.get('/api/task/status', protect, async (req, res) => {
       await user.save();
     }
 
-    // Determine if task is needed
-    const needsTask = !user.lastLoginTaskCompleted || 
-                     (user.dailyTask?.lastTaskDate !== today && user.dailyTask?.tasksCompleted === 0);
+    // Determine if task is needed based on lastLoginTaskCompleted
+    // This is set to false on every login, so task will be required each time
+    const needsTask = !user.lastLoginTaskCompleted;
     
-    console.log(`Task status for ${user.username}: needsTask=${needsTask}`);
+    console.log(`Task status for ${user.username}: needsTask=${needsTask}, lastLoginTaskCompleted=${user.lastLoginTaskCompleted}`);
     
     res.json({
       success: true,
@@ -1955,19 +1958,19 @@ app.use((err, req, res, next) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`
-  ��� POKEDOT Backend Server Started
-  ��� Port: ${PORT}
-  ��� MongoDB: ${mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'}
+  🚀 POKEDOT Backend Server Started
+  📊 Port: ${PORT}
+  📦 MongoDB: ${mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'}
   ⏰ Time: ${new Date().toLocaleString()}
   `);
-  console.log('\n��� Wallet Routes Mounted at /api/wallet:');
+  console.log('\n📡 Wallet Routes Mounted at /api/wallet:');
   console.log('   ✅ PUT    /api/wallet/bank-details    - Update bank details');
   console.log('   ✅ GET    /api/wallet/balance         - Get wallet balance');
   console.log('   ✅ POST   /api/wallet/withdraw        - Request withdrawal');
   console.log('   ✅ GET    /api/wallet/transactions    - Transaction history');
   console.log('   ✅ GET    /api/wallet/withdrawals     - Withdrawal history');
   
-  console.log('\n��� Admin Routes Mounted at /api/admin:');
+  console.log('\n📡 Admin Routes Mounted at /api/admin:');
   console.log('   ✅ GET    /api/admin/stats            - System statistics');
   console.log('   ✅ GET    /api/admin/users            - List users');
   console.log('   ✅ GET    /api/admin/users/:userId    - Get user details');
@@ -1983,7 +1986,7 @@ app.listen(PORT, () => {
   console.log('   ✅ GET    /api/admin/task-stats       - Task completion stats');
   console.log('   ✅ POST   /api/admin/create-admin     - Create admin user');
   
-  console.log('\n��� Task Routes Mounted at /api/task:');
-  console.log('   ✅ GET    /api/task/status            - Check if task needed');
+  console.log('\n📡 Task Routes Mounted at /api/task:');
+  console.log('   ✅ GET    /api/task/status            - Check if task needed (resets on every login)');
   console.log('   ✅ POST   /api/task/complete          - Mark task completed');
 });
