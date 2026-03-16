@@ -1843,8 +1843,8 @@ app.get('/api/task/status', protect, async (req, res) => {
       await user.save();
     }
 
-    // Determine if task is needed based on lastLoginTaskCompleted
-    // This is set to false on every login, so task will be required each time
+    // SIMPLE CHECK: Task is needed if lastLoginTaskCompleted is false
+    // This is set to false on EVERY login
     const needsTask = !user.lastLoginTaskCompleted;
     
     console.log(`Task status for ${user.username}: needsTask=${needsTask}, lastLoginTaskCompleted=${user.lastLoginTaskCompleted}`);
