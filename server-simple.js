@@ -1887,7 +1887,7 @@ app.post('/api/task/complete', protect, async (req, res) => {
     
     await user.save();
 
-    console.log(`Task completed for ${user.username}`);
+    console.log(`Login task completed for ${user.username}`);
 
     res.json({
       success: true,
