@@ -1475,7 +1475,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// Login - FIXED: Reset task status on every login
+// Login 
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -1494,7 +1494,7 @@ app.post('/api/auth/login', async (req, res) => {
     // Update online status
     user.isOnline = true;
     
-    // CRITICAL FIX: Reset task completion for this new login session
+    // Reset task completion for this new login session
     // This ensures the user sees the task modal on EVERY login
     user.lastLoginTaskCompleted = false;
     
